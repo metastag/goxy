@@ -1,6 +1,7 @@
-package main
+package health
 
 import (
+	"goxy/server"
 	"log"
 	"net/http"
 	"time"
@@ -8,12 +9,12 @@ import (
 
 // Represents a Periodic Health Checker system
 type HealthChecker struct {
-	servers    *ServerPool
+	servers    *server.ServerPool
 	httpClient http.Client
 }
 
 // Initialize a new Health Checker
-func NewHealthChecker(pool *ServerPool) *HealthChecker {
+func NewHealthChecker(pool *server.ServerPool) *HealthChecker {
 	httpClient := http.Client{Timeout: 20 * time.Second} // 20 second timeout for ping
 	healthChecker := HealthChecker{servers: pool, httpClient: httpClient}
 

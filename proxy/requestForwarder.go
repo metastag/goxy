@@ -1,7 +1,8 @@
-package main
+package proxy
 
 import (
 	"encoding/json"
+	"goxy/loadbalancer"
 	"io"
 	"log"
 	"net/http"
@@ -10,13 +11,13 @@ import (
 
 // Represents a Request Forwarding system
 type RequestForwarder struct {
-	lb              *LoadBalancer
+	lb              loadbalancer.LoadBalancer
 	httpClient      http.Client
 	hopByHopHeaders map[string]bool
 }
 
 // Initialize a new Request Forwarder
-func NewRequestForwarder(lb *LoadBalancer) *RequestForwarder {
+func NewRequestForwarder(lb loadbalancer.LoadBalancer) *RequestForwarder {
 	httpClient := http.Client{Timeout: 20 * time.Second}
 	hopByHopHeaders := map[string]bool{
 		"Connection":          true,
@@ -33,20 +34,22 @@ func NewRequestForwarder(lb *LoadBalancer) *RequestForwarder {
 }
 
 // Implements Request Forwarding
-func (rf *RequestForwarder) requestHandler(w http.ResponseWriter, r *http.Request) {
+func (rf *RequestForwarder) RequestHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Construct proxy url
-	path := rf.lb.GetNext() // Load balancer assigns a backend server
-	if path == "None" {
-		log.Println("Load Balancer - No available servers, cancelling request")
+	path, err := rf.lb.GetNext(r.Host + r.URL.String()) // Load balancer assigns a backend server
+	if err != nil {
+		log.Println(err)
 		WriteResponse(w, 503, "Service Unavailable")
 		return
 	}
+	defer rf.lb.Finished(r.Host + r.URL.String())
+
 	forwardUrl := path + r.URL.Path
 
 	// Add any query parameters to path
 	if r.URL.RawQuery != "" {
-		forwardUrl += "?" + r.URL.RawQuery
+		forwardUrl += r.URL.String()
 	}
 
 	// Generate new request with same method and body
