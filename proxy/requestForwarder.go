@@ -3,8 +3,10 @@ package proxy
 import (
 	"encoding/json"
 	"goxy/loadbalancer"
+	"goxy/ratelimit"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"time"
 )
@@ -12,12 +14,13 @@ import (
 // Represents a Request Forwarding system
 type RequestForwarder struct {
 	lb              loadbalancer.LoadBalancer
+	rl              *ratelimit.RateLimiter
 	httpClient      http.Client
 	hopByHopHeaders map[string]bool
 }
 
 // Initialize a new Request Forwarder
-func NewRequestForwarder(lb loadbalancer.LoadBalancer) *RequestForwarder {
+func NewRequestForwarder(lb loadbalancer.LoadBalancer, rl *ratelimit.RateLimiter) *RequestForwarder {
 	httpClient := http.Client{Timeout: 20 * time.Second}
 	hopByHopHeaders := map[string]bool{
 		"Connection":          true,
@@ -29,12 +32,25 @@ func NewRequestForwarder(lb loadbalancer.LoadBalancer) *RequestForwarder {
 		"Transfer-Encoding":   true,
 		"Upgrade":             true,
 	}
-	requestForwarder := RequestForwarder{lb: lb, httpClient: httpClient, hopByHopHeaders: hopByHopHeaders}
+	requestForwarder := RequestForwarder{lb: lb, rl: rl, httpClient: httpClient, hopByHopHeaders: hopByHopHeaders}
 	return &requestForwarder
 }
 
 // Implements Request Forwarding
 func (rf *RequestForwarder) RequestHandler(w http.ResponseWriter, r *http.Request) {
+
+	// Remove port from ip
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+
+	// Check if rate limit has been exhausted
+	if !rf.rl.Allow(host) {
+		log.Println("Rate Limit exhausted")
+		WriteResponse(w, 429, "Too Many Requests")
+		return
+	}
 
 	// Construct proxy url
 	path, err := rf.lb.GetNext(r.Host + r.URL.String()) // Load balancer assigns a backend server
