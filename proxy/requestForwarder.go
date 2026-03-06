@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"goxy/cache"
 	"goxy/loadbalancer"
 	"goxy/ratelimit"
 	"io"
@@ -15,12 +16,13 @@ import (
 type RequestForwarder struct {
 	lb              loadbalancer.LoadBalancer
 	rl              *ratelimit.RateLimiter
+	c               *cache.Cache
 	httpClient      http.Client
 	hopByHopHeaders map[string]bool
 }
 
 // Initialize a new Request Forwarder
-func NewRequestForwarder(lb loadbalancer.LoadBalancer, rl *ratelimit.RateLimiter) *RequestForwarder {
+func NewRequestForwarder(lb loadbalancer.LoadBalancer, rl *ratelimit.RateLimiter, c *cache.Cache) *RequestForwarder {
 	httpClient := http.Client{Timeout: 20 * time.Second}
 	hopByHopHeaders := map[string]bool{
 		"Connection":          true,
@@ -32,48 +34,36 @@ func NewRequestForwarder(lb loadbalancer.LoadBalancer, rl *ratelimit.RateLimiter
 		"Transfer-Encoding":   true,
 		"Upgrade":             true,
 	}
-	requestForwarder := RequestForwarder{lb: lb, rl: rl, httpClient: httpClient, hopByHopHeaders: hopByHopHeaders}
+	requestForwarder := RequestForwarder{
+		lb:              lb,
+		rl:              rl,
+		c:               c,
+		httpClient:      httpClient,
+		hopByHopHeaders: hopByHopHeaders,
+	}
 	return &requestForwarder
 }
 
-// Implements Request Forwarding
-func (rf *RequestForwarder) RequestHandler(w http.ResponseWriter, r *http.Request) {
-
-	// Remove port from ip
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-
-	// Check if rate limit has been exhausted
-	if !rf.rl.Allow(host) {
-		log.Println("Rate Limit exhausted")
-		WriteResponse(w, 429, "Too Many Requests")
-		return
-	}
-
+func (rf *RequestForwarder) constructRequest(r *http.Request) (*http.Request, int) {
 	// Construct proxy url
 	path, err := rf.lb.GetNext(r.Host + r.URL.String()) // Load balancer assigns a backend server
 	if err != nil {
-		log.Println(err)
-		WriteResponse(w, 503, "Service Unavailable")
-		return
+		log.Println("Error while creating proxy request - ", err)
+		return nil, 503
 	}
-	defer rf.lb.Finished(r.Host + r.URL.String())
 
 	forwardUrl := path + r.URL.Path
 
 	// Add any query parameters to path
 	if r.URL.RawQuery != "" {
-		forwardUrl += r.URL.String()
+		forwardUrl += "?" + r.URL.RawQuery
 	}
 
 	// Generate new request with same method and body
 	proxyRequest, err := http.NewRequest(r.Method, forwardUrl, r.Body)
 	if err != nil {
-		log.Println("Error creating proxy request - ", err)
-		WriteResponse(w, 500, "Internal Server Error")
-		return
+		log.Println("Error while creating proxy request - ", err)
+		return nil, 500
 	}
 	defer r.Body.Close()
 
@@ -92,6 +82,58 @@ func (rf *RequestForwarder) RequestHandler(w http.ResponseWriter, r *http.Reques
 	proxyRequest.Header.Set("X-Forwarded-Host", r.Host)
 	proxyRequest.Header.Set("X-Forwarded-Proto", r.Proto)
 
+	return proxyRequest, 0
+}
+
+// Implements Request Forwarding
+func (rf *RequestForwarder) RequestHandler(w http.ResponseWriter, r *http.Request) {
+	// Remove port from ip
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+
+	// Check if rate limit has been exhausted
+	if !rf.rl.Allow(host) {
+		log.Println("Rate Limit exhausted")
+		WriteResponse(w, 429, "Too Many Requests")
+		return
+	}
+
+	// Check if cache has the resource
+	cacheResult := rf.c.Lookup(r)
+	if cacheResult.Action == cache.CacheHit {
+		// Copy headers to response
+		for key, values := range cacheResult.Resource.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+
+		// Add age header and status code
+		w.Header().Add("age", cacheResult.Age)
+		w.WriteHeader(200)
+
+		w.Write(cacheResult.Resource.Body)
+		return
+	}
+
+	// Construct Proxy Request
+	proxyRequest, errorCode := rf.constructRequest(r)
+
+	if errorCode == 503 {
+		WriteResponse(w, 503, "Service Unavailable")
+		return
+	} else if errorCode == 500 {
+		WriteResponse(w, 500, "Internal Server Error")
+		return
+	}
+	defer rf.lb.Finished(r.Host + r.URL.String())
+
+	if cacheResult.Action == cache.CacheMustRevalidate {
+		proxyRequest.Header.Add("If-None-Match", cacheResult.ETag)
+	}
+
 	// Send request to backend server
 	resp, err := rf.httpClient.Do(proxyRequest)
 	if err != nil {
@@ -100,6 +142,30 @@ func (rf *RequestForwarder) RequestHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer resp.Body.Close()
+
+	// Cache says - Must revalidate with backend
+	// If Nothing changed, return cached response
+	if cacheResult.Action == cache.CacheMustRevalidate && resp.StatusCode == 304 {
+		rf.c.Refresh(r)
+		// Copy headers to response
+		for key, values := range cacheResult.Resource.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+
+		// Add age header and status code
+		w.Header().Add("age", "0")
+		w.WriteHeader(200)
+
+		w.Write(cacheResult.Resource.Body)
+		return
+	}
+
+	// Cache response
+	if r.Method == "GET" || r.Method == "HEAD" {
+		rf.c.Put(r, resp)
+	}
 
 	// Copy response headers back to user
 	for header, values := range resp.Header {

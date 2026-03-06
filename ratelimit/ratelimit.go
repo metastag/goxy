@@ -32,7 +32,7 @@ func NewRateLimiter() *RateLimiter {
 	return &rl
 }
 
-// Periodically Removes IPs who havent sent a request in `duration` amount of time
+// Periodically removes IPs who havent sent a request in `duration` amount of time
 func (rl *RateLimiter) cleanUp(duration int) {
 	period := time.Duration(duration) * time.Minute
 	ticker := time.NewTicker(period)

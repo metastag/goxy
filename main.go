@@ -3,6 +3,7 @@ package main
 // make http server port a configurable option in yaml file
 
 import (
+	"goxy/cache"
 	"goxy/health"
 	"goxy/loadbalancer"
 	"goxy/proxy"
@@ -17,7 +18,8 @@ func main() {
 	healthChecker := health.NewHealthChecker(serverPool)
 	loadBalancer := loadbalancer.NewLoadBalancer(serverPool)
 	rateLimiter := ratelimit.NewRateLimiter()
-	requestForwarder := proxy.NewRequestForwarder(loadBalancer, rateLimiter)
+	cache := cache.NewCache()
+	requestForwarder := proxy.NewRequestForwarder(loadBalancer, rateLimiter, cache)
 
 	// Ping servers periodically to test connection
 	go healthChecker.Ping()
