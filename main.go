@@ -4,7 +4,6 @@ package main
 
 import (
 	"goxy/cache"
-	"goxy/health"
 	"goxy/loadbalancer"
 	"goxy/proxy"
 	"goxy/ratelimit"
@@ -15,14 +14,13 @@ import (
 
 func main() {
 	serverPool := server.NewServerPool()
-	healthChecker := health.NewHealthChecker(serverPool)
 	loadBalancer := loadbalancer.NewLoadBalancer(serverPool)
 	rateLimiter := ratelimit.NewRateLimiter()
 	cache := cache.NewCache()
-	requestForwarder := proxy.NewRequestForwarder(loadBalancer, rateLimiter, cache)
+	requestForwarder := proxy.NewRequestForwarder(serverPool, loadBalancer, rateLimiter, cache)
 
 	// Ping servers periodically to test connection
-	go healthChecker.Ping()
+	go serverPool.Ping()
 
 	// Fetch from config file (TODO)
 	CERT_FILE := "./cert/cert.pem"

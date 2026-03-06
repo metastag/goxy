@@ -5,6 +5,7 @@ import (
 	"goxy/cache"
 	"goxy/loadbalancer"
 	"goxy/ratelimit"
+	"goxy/server"
 	"io"
 	"log"
 	"net"
@@ -14,6 +15,7 @@ import (
 
 // Represents a Request Forwarding system
 type RequestForwarder struct {
+	sp              *server.ServerPool
 	lb              loadbalancer.LoadBalancer
 	rl              *ratelimit.RateLimiter
 	c               *cache.Cache
@@ -22,7 +24,7 @@ type RequestForwarder struct {
 }
 
 // Initialize a new Request Forwarder
-func NewRequestForwarder(lb loadbalancer.LoadBalancer, rl *ratelimit.RateLimiter, c *cache.Cache) *RequestForwarder {
+func NewRequestForwarder(sp *server.ServerPool, lb loadbalancer.LoadBalancer, rl *ratelimit.RateLimiter, c *cache.Cache) *RequestForwarder {
 	httpClient := http.Client{Timeout: 20 * time.Second}
 	hopByHopHeaders := map[string]bool{
 		"Connection":          true,
@@ -35,6 +37,7 @@ func NewRequestForwarder(lb loadbalancer.LoadBalancer, rl *ratelimit.RateLimiter
 		"Upgrade":             true,
 	}
 	requestForwarder := RequestForwarder{
+		sp:              sp,
 		lb:              lb,
 		rl:              rl,
 		c:               c,
@@ -130,6 +133,7 @@ func (rf *RequestForwarder) RequestHandler(w http.ResponseWriter, r *http.Reques
 	}
 	defer rf.lb.Finished(r.Host + r.URL.String())
 
+	// Add If-None-Match header for Etag revalidation
 	if cacheResult.Action == cache.CacheMustRevalidate {
 		proxyRequest.Header.Add("If-None-Match", cacheResult.ETag)
 	}
@@ -137,6 +141,7 @@ func (rf *RequestForwarder) RequestHandler(w http.ResponseWriter, r *http.Reques
 	// Send request to backend server
 	resp, err := rf.httpClient.Do(proxyRequest)
 	if err != nil {
+		rf.sp.MarkError(proxyRequest.URL.Hostname()) // mark server error
 		log.Println("Backend service returned an error - ", err)
 		WriteResponse(w, 502, "Bad Gateway")
 		return

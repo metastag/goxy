@@ -10,8 +10,8 @@ a reverse proxy implementation written in golang
 5. Rate Limiting [✔️]
 6. Caching [✔️]
 7. Metrics Collection & Detailed Logs
-8. YAML/TOML-based configuration file
-9. Circuit Breaking
+8. YAML/TOML-based configuration file (todo: fix all inconsistencies with urls - ip vs url vs hostname)
+9. Circuit Breaking [✔️]
 10. Dynamic Service Discovery
 
 #### Setup Instructions
