@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"goxy/config"
 	"sync"
 	"time"
 )
@@ -18,14 +19,25 @@ type TokenBucket struct {
 type RateLimiter struct {
 	connections  map[string]*TokenBucket
 	globalBucket *TokenBucket
+	config       config.Ratelimiting
 	mu           sync.Mutex
 }
 
 // Returns a new RateLimiter struct
-func NewRateLimiter() *RateLimiter {
+func NewRateLimiter(config config.Ratelimiting) *RateLimiter {
 	connections := make(map[string]*TokenBucket)
-	bucket := TokenBucket{10, 10, 2, time.Now()} // fetch the rate limit variables from config file (TODO)
-	rl := RateLimiter{connections: connections, globalBucket: &bucket, mu: sync.Mutex{}}
+	bucket := TokenBucket{
+		config.Capacity,
+		config.Capacity,
+		config.Rate,
+		time.Now(),
+	}
+	rl := RateLimiter{
+		connections:  connections,
+		globalBucket: &bucket,
+		config:       config,
+		mu:           sync.Mutex{},
+	}
 
 	// Launch TTL cleanup goroutine
 	go rl.cleanUp(5)
@@ -82,8 +94,12 @@ func (rl *RateLimiter) Allow(ip string) bool {
 	//if user doesnt have a token bucket, create one and return true
 	if rl.connections[ip] == nil {
 
-		// remember to reduce bucket by 1 here!!!
-		tb := TokenBucket{9, 10, 2, time.Now()} // fetch the rate limit variables from config file (TODO)
+		tb := TokenBucket{
+			rl.config.Capacity - 1,
+			rl.config.Capacity,
+			rl.config.Rate,
+			time.Now(),
+		}
 		rl.connections[ip] = &tb
 		return true
 	}

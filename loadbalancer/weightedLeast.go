@@ -15,14 +15,21 @@ type WeightedLeast struct {
 }
 
 // Returns a new WeightedLeast struct
-func NewWeightedLeast(pool *server.ServerPool) *WeightedLeast {
+func NewWeightedLeast(pool *server.ServerPool, weights []int) *WeightedLeast {
+	servers := pool.GetAllServers()
+	if len(weights) != len(servers) {
+		return nil
+	}
+
 	connections := make(map[string]int)
-	weights := make(map[string]int) // fetch weights from config file (TODO)
-	// when making the parser, ensure weights > 0
-	weights["a"] = 5
-	weights["b"] = 2
-	weights["c"] = 1
-	wl := WeightedLeast{servers: pool, connections: connections, weights: weights, mu: sync.Mutex{}}
+
+	// Map weights to server ips
+	weightMap := make(map[string]int)
+	for i, url := range servers {
+		weightMap[url] = weights[i]
+	}
+
+	wl := WeightedLeast{servers: pool, connections: connections, weights: weightMap, mu: sync.Mutex{}}
 	return &wl
 }
 

@@ -1,8 +1,10 @@
 package server
 
 import (
+	"goxy/config"
 	"log"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 )
@@ -16,18 +18,21 @@ type ServerStatus struct {
 // Represents all servers
 type ServerPool struct {
 	servers map[string]*ServerStatus
+	pool    []string // ordered list of server URLs (matches config order)
+	config  config.Servers
 	mu      sync.RWMutex
 }
 
 // Initialize a new Server Pool
-func NewServerPool() *ServerPool {
-	// Fetch server ip from config file (TODO)
-	servers := make(map[string]*ServerStatus)
-	servers["1"] = &ServerStatus{healthy: true, errors: 0}
-	servers["2"] = &ServerStatus{healthy: true, errors: 0}
-	servers["3"] = &ServerStatus{healthy: true, errors: 0}
+func NewServerPool(config config.Servers) *ServerPool {
 
-	pool := ServerPool{servers: servers, mu: sync.RWMutex{}}
+	// Load ips and create a ServerStatus for them
+	servers := make(map[string]*ServerStatus)
+	for _, ip := range config.Pool {
+		servers[ip] = &ServerStatus{healthy: true, errors: 0}
+	}
+
+	pool := ServerPool{servers: servers, pool: config.Pool, config: config, mu: sync.RWMutex{}}
 	return &pool
 }
 
@@ -37,8 +42,8 @@ func (sp *ServerPool) GetHealthyServers() []string {
 	defer sp.mu.RUnlock()
 
 	var pool []string
-	for url, server := range sp.servers {
-		if server.healthy {
+	for _, url := range sp.pool {
+		if sp.servers[url].healthy {
 			pool = append(pool, url)
 		}
 	}
@@ -51,11 +56,9 @@ func (sp *ServerPool) GetAllServers() []string {
 	sp.mu.RLock()
 	defer sp.mu.RUnlock()
 
-	var pool []string
-	for url := range sp.servers {
-		pool = append(pool, url)
-	}
-	return pool
+	result := make([]string, len(sp.pool))
+	copy(result, sp.pool)
+	return result
 }
 
 func (sp *ServerPool) MarkError(url string) {
@@ -68,9 +71,8 @@ func (sp *ServerPool) MarkError(url string) {
 	}
 	s.errors++
 
-	// Fetch the error limit from config file (TODO)
 	// If errors cross threshold, mark unhealthy
-	if s.errors > 100 {
+	if s.errors > sp.config.ErrorLimit {
 		s.healthy = false
 	}
 }
@@ -83,17 +85,18 @@ func (sp *ServerPool) Ping() {
 	servers := sp.GetAllServers()
 
 	for {
-		time.Sleep(20 * time.Second) // Fetch time from config file (TODO)
-		for _, url := range servers {
-			resp, err := httpClient.Get(url + "/ping")
+		time.Sleep(time.Duration(sp.config.Ping) * time.Second)
+		for _, server := range servers {
+			pingURL, _ := url.JoinPath(server, "/ping")
+			resp, err := httpClient.Get(pingURL)
 
 			sp.mu.Lock()
 			if err != nil || resp == nil || resp.StatusCode != 200 { // Ping failed
-				log.Println("Ping failed for server - ", url)
-				sp.servers[url].healthy = false // mark unhealthy
+				log.Println("Ping failed for server - ", server)
+				sp.servers[server].healthy = false // mark unhealthy
 			} else {
-				sp.servers[url].errors = 0
-				sp.servers[url].healthy = true // mark healthy
+				sp.servers[server].errors = 0
+				sp.servers[server].healthy = true // mark healthy
 			}
 			if resp != nil {
 				resp.Body.Close()

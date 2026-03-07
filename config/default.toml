@@ -1,0 +1,34 @@
+# Server Pool
+# pool - place your server ips in this comma-seperated array
+# ping - how often to ping servers (seconds)
+# errorLimit - between every ping cycle, if any server has more internal errors than this number, mark as unhealthy
+[servers]
+pool = [ "ip1", "ip2" ]
+ping = 20
+errorLimit = 100
+
+
+# SSL Certificate
+# Add the path of your certificate and key file
+[certificate]
+enabled = false
+certFile = ""
+keyFile = ""
+
+# algorithm - Choose from roundRobin, random, ipHash, weighted, weightedLeast, leastConnection
+# weights - if using weighted/weighted_least, enter the weights of every server
+[loadbalancer]
+algorithm = "random"
+weights = [1, 1]
+
+# Caching
+[caching]
+enabled = true
+
+# Rate Limiting
+# capacity - size of bucket
+# rate - bucket refill rate (per second)
+[ratelimiting]
+enabled = true
+capacity = 10
+rate = 2

@@ -47,15 +47,15 @@ func NewRequestForwarder(sp *server.ServerPool, lb loadbalancer.LoadBalancer, rl
 	return &requestForwarder
 }
 
-func (rf *RequestForwarder) constructRequest(r *http.Request) (*http.Request, int) {
+func (rf *RequestForwarder) constructRequest(r *http.Request) (*http.Request, string, int) {
 	// Construct proxy url
-	path, err := rf.lb.GetNext(r.Host + r.URL.String()) // Load balancer assigns a backend server
+	backendURL, err := rf.lb.GetNext(r.Host + r.URL.String()) // Load balancer assigns a backend server
 	if err != nil {
 		log.Println("Error while creating proxy request - ", err)
-		return nil, 503
+		return nil, "", 503
 	}
 
-	forwardUrl := path + r.URL.Path
+	forwardUrl := backendURL + r.URL.Path
 
 	// Add any query parameters to path
 	if r.URL.RawQuery != "" {
@@ -66,7 +66,7 @@ func (rf *RequestForwarder) constructRequest(r *http.Request) (*http.Request, in
 	proxyRequest, err := http.NewRequest(r.Method, forwardUrl, r.Body)
 	if err != nil {
 		log.Println("Error while creating proxy request - ", err)
-		return nil, 500
+		return nil, "", 500
 	}
 	defer r.Body.Close()
 
@@ -85,7 +85,7 @@ func (rf *RequestForwarder) constructRequest(r *http.Request) (*http.Request, in
 	proxyRequest.Header.Set("X-Forwarded-Host", r.Host)
 	proxyRequest.Header.Set("X-Forwarded-Proto", r.Proto)
 
-	return proxyRequest, 0
+	return proxyRequest, backendURL, 0
 }
 
 // Implements Request Forwarding
@@ -97,32 +97,35 @@ func (rf *RequestForwarder) RequestHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Check if rate limit has been exhausted
-	if !rf.rl.Allow(host) {
+	if rf.rl != nil && !rf.rl.Allow(host) {
 		log.Println("Rate Limit exhausted")
 		WriteResponse(w, 429, "Too Many Requests")
 		return
 	}
 
 	// Check if cache has the resource
-	cacheResult := rf.c.Lookup(r)
-	if cacheResult.Action == cache.CacheHit {
-		// Copy headers to response
-		for key, values := range cacheResult.Resource.Header {
-			for _, value := range values {
-				w.Header().Add(key, value)
+	var cacheResult cache.LookupResult
+	if rf.c != nil {
+		cacheResult = rf.c.Lookup(r)
+		if cacheResult.Action == cache.CacheHit {
+			// Copy headers to response
+			for key, values := range cacheResult.Resource.Header {
+				for _, value := range values {
+					w.Header().Add(key, value)
+				}
 			}
+
+			// Add age header and status code
+			w.Header().Add("age", cacheResult.Age)
+			w.WriteHeader(200)
+
+			w.Write(cacheResult.Resource.Body)
+			return
 		}
-
-		// Add age header and status code
-		w.Header().Add("age", cacheResult.Age)
-		w.WriteHeader(200)
-
-		w.Write(cacheResult.Resource.Body)
-		return
 	}
 
 	// Construct Proxy Request
-	proxyRequest, errorCode := rf.constructRequest(r)
+	proxyRequest, backendURL, errorCode := rf.constructRequest(r)
 
 	if errorCode == 503 {
 		WriteResponse(w, 503, "Service Unavailable")
@@ -131,17 +134,17 @@ func (rf *RequestForwarder) RequestHandler(w http.ResponseWriter, r *http.Reques
 		WriteResponse(w, 500, "Internal Server Error")
 		return
 	}
-	defer rf.lb.Finished(r.Host + r.URL.String())
+	defer rf.lb.Finished(backendURL)
 
 	// Add If-None-Match header for Etag revalidation
-	if cacheResult.Action == cache.CacheMustRevalidate {
+	if rf.c != nil && cacheResult.Action == cache.CacheMustRevalidate {
 		proxyRequest.Header.Add("If-None-Match", cacheResult.ETag)
 	}
 
 	// Send request to backend server
 	resp, err := rf.httpClient.Do(proxyRequest)
 	if err != nil {
-		rf.sp.MarkError(proxyRequest.URL.Hostname()) // mark server error
+		rf.sp.MarkError(backendURL) // mark server error
 		log.Println("Backend service returned an error - ", err)
 		WriteResponse(w, 502, "Bad Gateway")
 		return
@@ -150,7 +153,7 @@ func (rf *RequestForwarder) RequestHandler(w http.ResponseWriter, r *http.Reques
 
 	// Cache says - Must revalidate with backend
 	// If Nothing changed, return cached response
-	if cacheResult.Action == cache.CacheMustRevalidate && resp.StatusCode == 304 {
+	if rf.c != nil && cacheResult.Action == cache.CacheMustRevalidate && resp.StatusCode == 304 {
 		rf.c.Refresh(r)
 		// Copy headers to response
 		for key, values := range cacheResult.Resource.Header {
@@ -168,7 +171,7 @@ func (rf *RequestForwarder) RequestHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Cache response
-	if r.Method == "GET" || r.Method == "HEAD" {
+	if rf.c != nil && (r.Method == "GET" || r.Method == "HEAD") {
 		rf.c.Put(r, resp)
 	}
 

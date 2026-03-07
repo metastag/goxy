@@ -15,19 +15,21 @@ type Weighted struct {
 }
 
 // Returns a new Weighted struct
-func NewWeighted(pool *server.ServerPool) *Weighted {
-	weights := make(map[string]int) // fetch weights from config file (TODO)
-	// when making the parser, ensure weights > 0
-	weights["a"] = 5
-	weights["b"] = 2
-	weights["c"] = 1
+func NewWeighted(pool *server.ServerPool, weights []int) *Weighted {
+	servers := pool.GetAllServers()
 
 	// No. of weights should be same as no. of servers
-	if len(weights) != len(pool.GetHealthyServers()) {
+	if len(weights) != len(servers) {
 		return nil
 	}
 
-	weighted := Weighted{servers: pool, weights: weights, counter: 0, mu: sync.Mutex{}}
+	// Map weights to server ips
+	weightMap := make(map[string]int)
+	for i, url := range servers {
+		weightMap[url] = weights[i]
+	}
+
+	weighted := Weighted{servers: pool, weights: weightMap, counter: 0, mu: sync.Mutex{}}
 	return &weighted
 }
 
