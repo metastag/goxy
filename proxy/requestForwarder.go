@@ -51,7 +51,7 @@ func (rf *RequestForwarder) constructRequest(r *http.Request) (*http.Request, st
 	// Construct proxy url
 	backendURL, err := rf.lb.GetNext(r.Host + r.URL.String()) // Load balancer assigns a backend server
 	if err != nil {
-		log.Println("Error while creating proxy request - ", err)
+		log.Println("Error while creating proxy request -", err)
 		return nil, "", 503
 	}
 
@@ -65,7 +65,7 @@ func (rf *RequestForwarder) constructRequest(r *http.Request) (*http.Request, st
 	// Generate new request with same method and body
 	proxyRequest, err := http.NewRequest(r.Method, forwardUrl, r.Body)
 	if err != nil {
-		log.Println("Error while creating proxy request - ", err)
+		log.Println("Error while creating proxy request -", err)
 		return nil, "", 500
 	}
 	defer r.Body.Close()
@@ -140,6 +140,8 @@ func (rf *RequestForwarder) RequestHandler(w http.ResponseWriter, r *http.Reques
 	if rf.c != nil && cacheResult.Action == cache.CacheMustRevalidate {
 		proxyRequest.Header.Add("If-None-Match", cacheResult.ETag)
 	}
+
+	log.Printf("[%s] %s - Forwarding to %s", r.Method, r.URL.Path, backendURL)
 
 	// Send request to backend server
 	resp, err := rf.httpClient.Do(proxyRequest)

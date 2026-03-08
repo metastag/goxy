@@ -13,7 +13,7 @@ type LoadBalancer interface {
 
 func NewLoadBalancer(pool *server.ServerPool, config config.Loadbalancer) LoadBalancer {
 	switch config.Algorithm {
-	case "round_robin":
+	case "roundRobin":
 		return NewRoundRobin(pool)
 	case "random":
 		return NewRandom(pool)

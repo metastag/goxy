@@ -3,23 +3,22 @@
 # ping - how often to ping servers (seconds)
 # errorLimit - between every ping cycle, if any server has more internal errors than this number, mark as unhealthy
 [servers]
-pool = [ "ip1", "ip2" ]
+pool = [ "http://localhost:8081", "http://localhost:8082", "http://localhost:8083", "http://localhost:8084", "http://localhost:8085" ]
 ping = 20
 errorLimit = 100
-
 
 # SSL Certificate
 # Add the path of your certificate and key file
 [certificate]
-enabled = true
+enabled = false
 certFile = ""
 keyFile = ""
 
 # algorithm - Choose from roundRobin, random, ipHash, weighted, weightedLeast, leastConnection
 # weights - if using weighted/weighted_least, enter the weights of every server
 [loadbalancer]
-algorithm = "random"
-weights = [1, 1]
+algorithm = "weighted"
+weights = [3, 1, 4, 2, 2]
 
 # Caching
 [caching]

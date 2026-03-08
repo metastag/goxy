@@ -73,6 +73,7 @@ func (sp *ServerPool) MarkError(url string) {
 
 	// If errors cross threshold, mark unhealthy
 	if s.errors > sp.config.ErrorLimit {
+		log.Printf("Too many errors for %s, marking as unhealthy\n", url)
 		s.healthy = false
 	}
 }
@@ -92,7 +93,7 @@ func (sp *ServerPool) Ping() {
 
 			sp.mu.Lock()
 			if err != nil || resp == nil || resp.StatusCode != 200 { // Ping failed
-				log.Println("Ping failed for server - ", server)
+				log.Println("Ping failed for server -", server)
 				sp.servers[server].healthy = false // mark unhealthy
 			} else {
 				sp.servers[server].errors = 0

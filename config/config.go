@@ -47,7 +47,7 @@ func LoadConfig() *Config {
 	fileName := "config.toml"
 	if _, err := os.Stat(fileName); err != nil {
 		log.Println("config.toml not found - using default config")
-		fileName = "default.toml"
+		fileName = "config/default.toml"
 	}
 
 	// Load config file into a new Config struct
