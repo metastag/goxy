@@ -1,4 +1,4 @@
-![logo](gopher.jpg)
+<img src="gopher.jpg" width=100 />
 
 
 ### goxy
